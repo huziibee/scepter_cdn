@@ -1,0 +1,14 @@
+**/.git
+**/.vs
+**/.idea
+**/bin
+**/obj
+**/TestResults
+**/.local-data
+**/.env
+**/*.user
+**/out
+**/artifacts
+README.md
+openapi.yaml
+.env.example

@@ -1,0 +1,208 @@
+openapi: 3.0.3
+info:
+  title: Image CDN API
+  version: 1.0.0
+  description: |
+    Small CRUD API over Cloudflare Images (or a Local development provider).
+    Callers supply an image file and a logical custom path; the API returns a CDN URL.
+servers:
+  - url: http://localhost:5000
+    description: Local development
+security:
+  - ApiKeyAuth: []
+paths:
+  /health:
+    get:
+      summary: Health check
+      security: []
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              examples:
+                local:
+                  value:
+                    status: ok
+                    provider: Local
+                cloudflare:
+                  value:
+                    status: ok
+                    provider: Cloudflare
+  /api/images:
+    post:
+      summary: Upload a new image
+      description: |
+        multipart/form-data with required fields `file` and `path`.
+        Uses the caller-selected custom image ID/path after normalization.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, path]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                path:
+                  type: string
+                  example: products/nike/air-max/front
+      responses:
+        "201":
+          description: Image created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageResponse"
+              example:
+                id: products/nike/air-max/front
+                url: https://imagedelivery.net/ACCOUNT_HASH/products/nike/air-max/front/public
+                filename: shoe.jpg
+                contentType: image/jpeg
+                uploaded: null
+        "400":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "502":
+          $ref: "#/components/responses/Problem"
+  /api/images/{path}:
+    parameters:
+      - $ref: "#/components/parameters/ImagePath"
+    get:
+      summary: Get image metadata
+      responses:
+        "200":
+          description: Image found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageResponse"
+              example:
+                id: products/nike/air-max/front
+                url: https://imagedelivery.net/ACCOUNT_HASH/products/nike/air-max/front/public
+                filename: shoe.jpg
+                contentType: image/jpeg
+                uploaded: "2026-09-08T18:00:00Z"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+    put:
+      summary: Replace image bytes at an existing path
+      description: |
+        Replacement is intentionally non-atomic against Cloudflare:
+        verify existing → delete → upload with the same custom ID.
+        Cloudflare PATCH does not replace image bytes.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Image replaced
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageResponse"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "502":
+          $ref: "#/components/responses/Problem"
+    delete:
+      summary: Delete an image
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: Required when SERVICE_API_KEY is configured.
+  parameters:
+    ImagePath:
+      name: path
+      in: path
+      required: true
+      description: Nested custom image ID/path (supports slashes).
+      schema:
+        type: string
+      example: products/nike/air-max/front
+  schemas:
+    ImageResponse:
+      type: object
+      required: [id, url]
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+          format: uri
+        filename:
+          type: string
+          nullable: true
+        contentType:
+          type: string
+          nullable: true
+        uploaded:
+          type: string
+          format: date-time
+          nullable: true
+    HealthResponse:
+      type: object
+      required: [status, provider]
+      properties:
+        status:
+          type: string
+          example: ok
+        provider:
+          type: string
+          enum: [Local, Cloudflare]
+    ProblemDetails:
+      type: object
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+        traceId:
+          type: string
+  responses:
+    Problem:
+      description: RFC 7807 problem details
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
