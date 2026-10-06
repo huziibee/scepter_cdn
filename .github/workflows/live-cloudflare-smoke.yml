@@ -1,0 +1,272 @@
+name: Live Cloudflare Smoke Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/live-cloudflare-smoke.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  live-smoke:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: c3b496d2f2d933c22c92d5ecc6f6fb1f
+      CLOUDFLARE_ACCOUNT_HASH: ySTuqSaEqBvpVysl2D5VVQ
+      CLOUDFLARE_VARIANT: public
+      IMAGE_PROVIDER: Cloudflare
+      SERVICE_API_KEY: ci-live-smoke-key
+      ASPNETCORE_ENVIRONMENT: Production
+      API_BASE: http://127.0.0.1:5000
+
+    steps:
+      - name: Secret not configured
+        if: env.CLOUDFLARE_API_TOKEN == ''
+        run: |
+          echo "CLOUDFLARE_API_TOKEN repository secret is not configured."
+          echo "Add it under Settings -> Secrets and variables -> Actions, then rerun."
+          exit 1
+
+      - uses: actions/checkout@v4
+        if: env.CLOUDFLARE_API_TOKEN != ''
+
+      - uses: actions/setup-dotnet@v4
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Verify Cloudflare token
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl -fsS \
+            "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")"
+          echo "$response" | jq -e '.success == true and .result.status == "active"' >/dev/null
+          echo "Cloudflare token is active."
+
+      - name: Build
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        run: |
+          dotnet restore
+          dotnet build --no-restore --configuration Release
+
+      - name: Generate smoke-test media
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import struct, zlib
+
+          def png(path, rgb):
+              width = height = 16
+              raw = b''.join(b'\x00' + bytes(rgb) * width for _ in range(height))
+              def chunk(t, d):
+                  return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t+d) & 0xffffffff)
+              data = (
+                  b'\x89PNG\r\n\x1a\n'
+                  + chunk(b'IHDR', struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+                  + chunk(b'IDAT', zlib.compress(raw))
+                  + chunk(b'IEND', b'')
+              )
+              open(path, 'wb').write(data)
+
+          png('/tmp/scepter-smoke-1.png', (220, 40, 40))
+          png('/tmp/scepter-smoke-2.png', (40, 80, 220))
+          PY
+
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i "color=c=black:s=320x240:d=2" \
+            -f lavfi -i "sine=frequency=440:duration=2" \
+            -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest \
+            /tmp/scepter-smoke.mp4
+
+          test -s /tmp/scepter-smoke-1.png
+          test -s /tmp/scepter-smoke-2.png
+          test -s /tmp/scepter-smoke.mp4
+          echo "Generated image and video fixtures."
+
+      - name: Start API
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup dotnet run \
+            --no-build \
+            --configuration Release \
+            --project src/ImageCdn.Api \
+            --urls "${API_BASE}" \
+            > /tmp/scepter-cdn-api.log 2>&1 &
+          echo $! > /tmp/scepter-cdn-api.pid
+
+          for i in $(seq 1 60); do
+            if curl -fsS "${API_BASE}/health" >/tmp/health.json 2>/dev/null; then
+              jq . /tmp/health.json
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat /tmp/scepter-cdn-api.log
+          exit 1
+
+      - name: Test every REST endpoint live
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_id="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          image_path="live-smoke/${run_id}/image"
+          auth=(-H "X-Api-Key: ${SERVICE_API_KEY}")
+          video_uid=""
+
+          cleanup() {
+            set +e
+            if [ -n "${video_uid}" ]; then
+              curl -sS -X DELETE "${API_BASE}/api/videos/${video_uid}" "${auth[@]}" >/dev/null 2>&1
+            fi
+            curl -sS -X DELETE "${API_BASE}/api/images/${image_path}" "${auth[@]}" >/dev/null 2>&1
+            if [ -f /tmp/scepter-cdn-api.pid ]; then
+              kill "$(cat /tmp/scepter-cdn-api.pid)" >/dev/null 2>&1
+            fi
+          }
+          trap cleanup EXIT
+
+          echo "1/12 GET /health"
+          curl -fsS "${API_BASE}/health" | jq -e '.status == "ok" and .provider == "Cloudflare"' >/dev/null
+
+          echo "2/12 API key middleware"
+          status="$(curl -sS -o /tmp/unauthorized.json -w '%{http_code}' "${API_BASE}/api/images/${image_path}")"
+          test "$status" = "401"
+
+          echo "3/12 POST /api/images"
+          created="$(curl -fsS -X POST "${API_BASE}/api/images" \
+            "${auth[@]}" \
+            -F "file=@/tmp/scepter-smoke-1.png;type=image/png" \
+            -F "path=${image_path}")"
+          echo "$created" | jq .
+          echo "$created" | jq -e --arg id "$image_path" '.id == $id' >/dev/null
+          image_url="$(echo "$created" | jq -r '.url')"
+          test -n "$image_url"
+          test "$image_url" != "null"
+
+          echo "4/12 GET /api/images/{path}"
+          curl -fsS "${API_BASE}/api/images/${image_path}" "${auth[@]}" \
+            | jq -e --arg id "$image_path" '.id == $id' >/dev/null
+
+          echo "5/12 Fetch image back from Cloudflare Images CDN"
+          image_ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS "$image_url" -o /tmp/fetched-image; then
+              if [ -s /tmp/fetched-image ]; then
+                image_ok=1
+                break
+              fi
+            fi
+            sleep 2
+          done
+          test "$image_ok" = "1"
+          echo "Cloudflare Images delivery works: $image_url"
+
+          echo "6/12 PUT /api/images/{path}"
+          replaced="$(curl -fsS -X PUT "${API_BASE}/api/images/${image_path}" \
+            "${auth[@]}" \
+            -F "file=@/tmp/scepter-smoke-2.png;type=image/png")"
+          echo "$replaced" | jq -e '.filename == "scepter-smoke-2.png"' >/dev/null
+
+          echo "7/12 GET image after replacement"
+          curl -fsS "${API_BASE}/api/images/${image_path}" "${auth[@]}" \
+            | jq -e '.filename == "scepter-smoke-2.png"' >/dev/null
+
+          echo "8/12 DELETE /api/images/{path} + verify 404"
+          curl -fsS -X DELETE "${API_BASE}/api/images/${image_path}" "${auth[@]}" -o /dev/null
+          status="$(curl -sS -o /tmp/image-missing.json -w '%{http_code}' \
+            "${API_BASE}/api/images/${image_path}" "${auth[@]}")"
+          test "$status" = "404"
+
+          echo "9/12 POST /api/videos/direct-upload"
+          direct="$(curl -fsS -X POST "${API_BASE}/api/videos/direct-upload" \
+            "${auth[@]}" \
+            -H "Content-Type: application/json" \
+            --data-binary @- <<JSON
+          {
+            "maxDurationSeconds": 60,
+            "creator": "github-live-smoke",
+            "fileName": "scepter-smoke.mp4",
+            "requireSignedUrls": false
+          }
+          JSON
+          )"
+          echo "$direct" | jq .
+          video_uid="$(echo "$direct" | jq -r '.uid')"
+          upload_url="$(echo "$direct" | jq -r '.uploadUrl')"
+          test -n "$video_uid"
+          test "$video_uid" != "null"
+          test -n "$upload_url"
+          test "$upload_url" != "null"
+
+          echo "Upload video bytes directly to Cloudflare Stream"
+          curl -fsS -X POST "$upload_url" \
+            -F "file=@/tmp/scepter-smoke.mp4;type=video/mp4" >/tmp/video-upload-result.json || {
+              cat /tmp/video-upload-result.json
+              exit 1
+            }
+
+          echo "10/12 GET /api/videos/{uid} until ready"
+          ready=0
+          for i in $(seq 1 60); do
+            video="$(curl -fsS "${API_BASE}/api/videos/${video_uid}" "${auth[@]}")"
+            state="$(echo "$video" | jq -r '.status.state // "unknown"')"
+            pct="$(echo "$video" | jq -r '.status.pctComplete // ""')"
+            echo "Stream state: $state $pct"
+            if [ "$(echo "$video" | jq -r '.readyToStream')" = "true" ]; then
+              ready=1
+              echo "$video" >/tmp/video-ready.json
+              break
+            fi
+            sleep 5
+          done
+          test "$ready" = "1"
+
+          hls="$(jq -r '.playback.hls // empty' /tmp/video-ready.json)"
+          thumbnail="$(jq -r '.thumbnail // empty' /tmp/video-ready.json)"
+          preview="$(jq -r '.preview // empty' /tmp/video-ready.json)"
+          test -n "$hls"
+
+          echo "11/12 Fetch video playback back from Cloudflare Stream"
+          curl -fsS "$hls" -o /tmp/video.m3u8
+          grep -q '#EXTM3U' /tmp/video.m3u8
+          if [ -n "$thumbnail" ]; then
+            curl -fsS "$thumbnail" -o /tmp/video-thumbnail
+            test -s /tmp/video-thumbnail
+          fi
+          echo "Cloudflare Stream HLS works: $hls"
+          if [ -n "$preview" ]; then
+            echo "Cloudflare Stream preview: $preview"
+          fi
+
+          echo "12/12 DELETE /api/videos/{uid} + verify 404"
+          curl -fsS -X DELETE "${API_BASE}/api/videos/${video_uid}" "${auth[@]}" -o /dev/null
+          status="$(curl -sS -o /tmp/video-missing.json -w '%{http_code}' \
+            "${API_BASE}/api/videos/${video_uid}" "${auth[@]}")"
+          test "$status" = "404"
+          video_uid=""
+
+          echo
+          echo "LIVE CLOUDFLARE SMOKE TEST PASSED"
+
+      - name: API log on failure
+        if: failure() && env.CLOUDFLARE_API_TOKEN != ''
+        run: |
+          if [ -f /tmp/scepter-cdn-api.log ]; then
+            cat /tmp/scepter-cdn-api.log
+          fi
