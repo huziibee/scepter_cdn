@@ -38,6 +38,10 @@ public sealed class ExceptionHandlingMiddleware
                 StatusCodes.Status409Conflict,
                 "Image already exists",
                 exception.Message),
+            VideoNotFoundException => (
+                StatusCodes.Status404NotFound,
+                "Video not found",
+                exception.Message),
             UpstreamProviderException upe => (
                 upe.StatusCode is >= 500 or null or < 400
                     ? StatusCodes.Status502BadGateway

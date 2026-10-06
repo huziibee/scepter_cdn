@@ -1,10 +1,11 @@
 openapi: 3.0.3
 info:
-  title: Image CDN API
-  version: 1.0.0
+  title: Scepter Media CDN API
+  version: 1.1.0
   description: |
-    Small CRUD API over Cloudflare Images (or a Local development provider).
-    Callers supply an image file and a logical custom path; the API returns a CDN URL.
+    Media API backed by Cloudflare Images and Cloudflare Stream.
+    Images use server-side CRUD. Videos use Cloudflare Stream direct creator uploads so
+    clients upload video bytes directly to Cloudflare without receiving the API token.
 servers:
   - url: http://localhost:5000
     description: Local development
@@ -22,21 +23,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
-              examples:
-                local:
-                  value:
-                    status: ok
-                    provider: Local
-                cloudflare:
-                  value:
-                    status: ok
-                    provider: Cloudflare
+
   /api/images:
     post:
       summary: Upload a new image
-      description: |
-        multipart/form-data with required fields `file` and `path`.
-        Uses the caller-selected custom image ID/path after normalization.
+      description: multipart/form-data with required fields `file` and `path`.
       requestBody:
         required: true
         content:
@@ -58,12 +49,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ImageResponse"
-              example:
-                id: products/nike/air-max/front
-                url: https://imagedelivery.net/ACCOUNT_HASH/products/nike/air-max/front/public
-                filename: shoe.jpg
-                contentType: image/jpeg
-                uploaded: null
         "400":
           $ref: "#/components/responses/Problem"
         "409":
@@ -72,6 +57,7 @@ paths:
           $ref: "#/components/responses/Problem"
         "502":
           $ref: "#/components/responses/Problem"
+
   /api/images/{path}:
     parameters:
       - $ref: "#/components/parameters/ImagePath"
@@ -84,22 +70,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ImageResponse"
-              example:
-                id: products/nike/air-max/front
-                url: https://imagedelivery.net/ACCOUNT_HASH/products/nike/air-max/front/public
-                filename: shoe.jpg
-                contentType: image/jpeg
-                uploaded: "2026-09-08T18:00:00Z"
         "400":
           $ref: "#/components/responses/Problem"
         "404":
           $ref: "#/components/responses/Problem"
     put:
       summary: Replace image bytes at an existing path
-      description: |
-        Replacement is intentionally non-atomic against Cloudflare:
-        verify existing → delete → upload with the same custom ID.
-        Cloudflare PATCH does not replace image bytes.
       requestBody:
         required: true
         content:
@@ -135,6 +111,64 @@ paths:
           $ref: "#/components/responses/Problem"
         "404":
           $ref: "#/components/responses/Problem"
+
+  /api/videos/direct-upload:
+    post:
+      summary: Create a one-time Cloudflare Stream upload URL
+      description: |
+        The backend authenticates to Cloudflare and returns a one-time upload URL.
+        The client then POSTs the video file directly to that URL.
+        Basic direct uploads are intended for videos up to 200 MB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVideoUploadRequest"
+      responses:
+        "201":
+          description: One-time upload URL created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectVideoUploadResponse"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "502":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+
+  /api/videos/{uid}:
+    parameters:
+      - $ref: "#/components/parameters/VideoUid"
+    get:
+      summary: Get video processing state and playback URLs
+      responses:
+        "200":
+          description: Video found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoResponse"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "502":
+          $ref: "#/components/responses/Problem"
+    delete:
+      summary: Delete a video
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "502":
+          $ref: "#/components/responses/Problem"
+
 components:
   securitySchemes:
     ApiKeyAuth:
@@ -142,15 +176,24 @@ components:
       in: header
       name: X-Api-Key
       description: Required when SERVICE_API_KEY is configured.
+
   parameters:
     ImagePath:
       name: path
       in: path
       required: true
-      description: Nested custom image ID/path (supports slashes).
+      description: Nested custom image ID/path.
       schema:
         type: string
       example: products/nike/air-max/front
+    VideoUid:
+      name: uid
+      in: path
+      required: true
+      schema:
+        type: string
+      example: f65014bc6ff5419ea86e7972a047ba22
+
   schemas:
     ImageResponse:
       type: object
@@ -171,6 +214,105 @@ components:
           type: string
           format: date-time
           nullable: true
+
+    CreateVideoUploadRequest:
+      type: object
+      properties:
+        maxDurationSeconds:
+          type: integer
+          minimum: 1
+          maximum: 36000
+          default: 600
+        creator:
+          type: string
+          maxLength: 64
+          nullable: true
+        fileName:
+          type: string
+          nullable: true
+        allowedOrigins:
+          type: array
+          items:
+            type: string
+          nullable: true
+        requireSignedUrls:
+          type: boolean
+          default: false
+
+    DirectVideoUploadResponse:
+      type: object
+      required: [uid, uploadUrl]
+      properties:
+        uid:
+          type: string
+        uploadUrl:
+          type: string
+          format: uri
+
+    VideoResponse:
+      type: object
+      required: [uid, readyToStream, requireSignedUrls]
+      properties:
+        uid:
+          type: string
+        readyToStream:
+          type: boolean
+        preview:
+          type: string
+          nullable: true
+        thumbnail:
+          type: string
+          nullable: true
+        playback:
+          $ref: "#/components/schemas/VideoPlaybackResponse"
+        status:
+          $ref: "#/components/schemas/VideoStatusResponse"
+        duration:
+          type: number
+          format: double
+          nullable: true
+        size:
+          type: integer
+          format: int64
+          nullable: true
+        uploaded:
+          type: string
+          format: date-time
+          nullable: true
+        creator:
+          type: string
+          nullable: true
+        requireSignedUrls:
+          type: boolean
+
+    VideoPlaybackResponse:
+      type: object
+      nullable: true
+      properties:
+        hls:
+          type: string
+          nullable: true
+        dash:
+          type: string
+          nullable: true
+
+    VideoStatusResponse:
+      type: object
+      nullable: true
+      properties:
+        state:
+          type: string
+          nullable: true
+        pctComplete:
+          type: string
+          nullable: true
+        errorReasonCode:
+          type: string
+          nullable: true
+        errorReasonText:
+          type: string
+          nullable: true
+
     HealthResponse:
       type: object
       required: [status, provider]
@@ -181,6 +323,7 @@ components:
         provider:
           type: string
           enum: [Local, Cloudflare]
+
     ProblemDetails:
       type: object
       properties:
@@ -196,6 +339,7 @@ components:
           type: string
         traceId:
           type: string
+
   responses:
     Problem:
       description: RFC 7807 problem details
