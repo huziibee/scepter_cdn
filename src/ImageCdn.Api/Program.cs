@@ -20,9 +20,9 @@ builder.Services.AddSwaggerGen(options =>
 {
     options.SwaggerDoc("v1", new OpenApiInfo
     {
-        Title = "Image CDN API",
+        Title = "Scepter Media CDN API",
         Version = "v1",
-        Description = "CRUD abstraction over Cloudflare Images (with a Local provider for development)."
+        Description = "Cloudflare Images CRUD plus Cloudflare Stream direct video uploads."
     });
     options.AddSecurityDefinition("ApiKey", new OpenApiSecurityScheme
     {
@@ -42,6 +42,19 @@ builder.Services.Configure<SecurityOptions>(builder.Configuration.GetSection(Sec
 
 builder.Services.AddSingleton<ImagePathValidator>();
 builder.Services.AddSingleton<ImageFileValidator>();
+
+builder.Services.AddHttpClient(CloudflareStreamClient.HttpClientName, (sp, client) =>
+{
+    var opts = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<CloudflareOptions>>().Value;
+    client.BaseAddress = new Uri(opts.ApiBaseUrl);
+    if (!string.IsNullOrWhiteSpace(opts.ApiToken))
+    {
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", opts.ApiToken);
+    }
+
+    client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+});
+builder.Services.AddSingleton<CloudflareStreamClient>();
 
 var providerName = builder.Configuration.GetValue<string>($"{ImageProviderOptions.SectionName}:Provider")
                    ?? builder.Configuration["IMAGE_PROVIDER"]
@@ -84,7 +97,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI(options =>
     {
-        options.SwaggerEndpoint("/swagger/v1/swagger.json", "Image CDN API v1");
+        options.SwaggerEndpoint("/swagger/v1/swagger.json", "Scepter Media CDN API v1");
     });
 }
 
