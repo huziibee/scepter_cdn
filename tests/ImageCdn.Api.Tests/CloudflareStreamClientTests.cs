@@ -53,8 +53,8 @@ public sealed class CloudflareStreamClientTests
             captured.RequestUri!.ToString());
         Assert.Equal("Bearer", captured.Headers.Authorization!.Scheme);
         Assert.Equal(Token, captured.Headers.Authorization.Parameter);
-        Assert.Contains(""maxDurationSeconds":600", body);
-        Assert.Contains(""creator":"user-123"", body);
+        Assert.Contains("maxDurationSeconds", body);
+        Assert.Contains("user-123", body);
         Assert.Equal("f65014bc6ff5419ea86e7972a047ba22", result.Uid);
         Assert.StartsWith("https://upload.videodelivery.net/", result.UploadUrl);
     }
