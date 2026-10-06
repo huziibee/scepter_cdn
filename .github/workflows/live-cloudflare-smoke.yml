@@ -107,6 +107,7 @@ jobs:
           set -euo pipefail
           nohup dotnet run \
             --no-build \
+            --no-launch-profile \
             --configuration Release \
             --project src/ImageCdn.Api \
             --urls "${API_BASE}" \
