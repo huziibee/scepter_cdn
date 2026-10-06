@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import time
+import tempfile
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -16,6 +17,16 @@ OUT.mkdir(parents=True, exist_ok=True)
 
 
 def request(url, *, payload=None, api=False, cloudflare=False):
+    if not api and not cloudflare:
+        # Use the same HTTP client as the successful external delivery checks.
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'response'
+            info = subprocess.check_output([
+                'curl', '-fsSL', '--max-time', '60', '-o', str(target),
+                '-w', '%{json}', url,
+            ])
+            metadata = json.loads(info)
+            return target.read_bytes(), metadata['http_code'], metadata.get('content_type') or ''
     headers = {}
     if api:
         headers['X-Api-Key'] = os.environ['SERVICE_API_KEY']
@@ -50,7 +61,7 @@ def fetch(label, url, validate):
             assert status == 200 and data and validate(data, content_type), label + ' invalid response'
             print(f'{label}: HTTP {status}, {len(data)} bytes, {content_type}', flush=True)
             return {'status': status, 'bytes': len(data), 'contentType': content_type}
-        except (urllib.error.URLError, AssertionError):
+        except (urllib.error.URLError, subprocess.CalledProcessError, AssertionError):
             if attempt == 29:
                 raise
             time.sleep(2)
@@ -118,8 +129,8 @@ if video['playback'].get('dash'):
 if video.get('thumbnail'):
     checks['thumbnail'] = fetch('Thumbnail', video['thumbnail'], lambda data, ct: ct.startswith('image/'))
 # Decode actual CDN image and HLS media, rather than merely trusting metadata/HTTP 200.
-subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-i', image_url, '-frames:v', '1', '-f', 'null', '-'], check=True)
-subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-i', video['playback']['hls'], '-t', '1', '-f', 'null', '-'], check=True)
+subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-user_agent', 'curl/8.0', '-i', image_url, '-frames:v', '1', '-f', 'null', '-'], check=True)
+subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-user_agent', 'curl/8.0', '-i', video['playback']['hls'], '-t', '1', '-f', 'null', '-'], check=True)
 checks['imageDecoded'] = True
 checks['videoDecoded'] = True
 assert api('/api/images/' + IMAGE_ID)['id'] == IMAGE_ID
