@@ -27,7 +27,10 @@ paths:
   /api/images:
     post:
       summary: Upload a new image
-      description: multipart/form-data with required fields `file` and `path`.
+      description: |
+        multipart/form-data with required fields `file` and `path`.
+        The path is the exact Cloudflare Images custom ID, including nested paths
+        and extensions, for example huziibee/001.jpg. Assets persist until explicitly deleted.
       requestBody:
         required: true
         content:
@@ -41,7 +44,7 @@ paths:
                   format: binary
                 path:
                   type: string
-                  example: products/nike/air-max/front
+                  example: huziibee/001.jpg
       responses:
         "201":
           description: Image created
@@ -185,7 +188,7 @@ components:
       description: Nested custom image ID/path.
       schema:
         type: string
-      example: products/nike/air-max/front
+      example: huziibee/001.jpg
     VideoUid:
       name: uid
       in: path
@@ -229,6 +232,8 @@ components:
           nullable: true
         fileName:
           type: string
+          description: Stored as Stream meta.name; does not set the Cloudflare-generated video UID.
+          example: huziibee/001.mp4
           nullable: true
         allowedOrigins:
           type: array
@@ -257,6 +262,7 @@ components:
           type: string
         readyToStream:
           type: boolean
+          description: Poll GET /api/videos/{uid} until true before using playback URLs.
         preview:
           type: string
           nullable: true

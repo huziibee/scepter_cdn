@@ -1,0 +1,77 @@
+name: Persistent Cloudflare Media
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/persistent-cloudflare-media.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: persistent-cloudflare-media
+  cancel-in-progress: false
+
+jobs:
+  upload-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: c3b496d2f2d933c22c92d5ecc6f6fb1f
+      CLOUDFLARE_ACCOUNT_HASH: ySTuqSaEqBvpVysl2D5VVQ
+      CLOUDFLARE_VARIANT: public
+      IMAGE_PROVIDER: Cloudflare
+      ASPNETCORE_ENVIRONMENT: Production
+      API_BASE: http://127.0.0.1:5000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Configure credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo 'CLOUDFLARE_API_TOKEN secret is missing'; exit 1; }
+          key="$(openssl rand -hex 32)"
+          echo "::add-mask::$key"
+          echo "SERVICE_API_KEY=$key" >> "$GITHUB_ENV"
+      - name: Build and test
+        run: |
+          dotnet restore
+          dotnet build --no-restore --configuration Release
+          dotnet test --no-build --configuration Release
+      - name: Generate real JPEG and MP4
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          ffmpeg -hide_banner -loglevel error -y -f lavfi -i 'testsrc2=size=640x360:rate=1' -frames:v 1 /tmp/001.jpg
+          ffmpeg -hide_banner -loglevel error -y -f lavfi -i 'testsrc2=size=640x360:rate=24:duration=3' -f lavfi -i 'sine=frequency=440:duration=3' -c:v libx264 -pix_fmt yuv420p -c:a aac -movflags +faststart -shortest /tmp/001.mp4
+      - name: Start API
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup dotnet run --no-build --no-launch-profile --configuration Release --project src/ImageCdn.Api --urls "$API_BASE" > /tmp/scepter-cdn-api.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS "$API_BASE/health" > /dev/null 2>&1; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/scepter-cdn-api.log
+          exit 1
+      - name: Upload, await processing, and verify retained media
+        run: python3 scripts/persistent-media.py
+      - name: Save verification and allocated UIDs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: persistent-cloudflare-media
+          path: artifacts/persistent-media/
+          if-no-files-found: ignore
+      - name: API log on failure
+        if: failure()
+        run: test ! -f /tmp/scepter-cdn-api.log || cat /tmp/scepter-cdn-api.log

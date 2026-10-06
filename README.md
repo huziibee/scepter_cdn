@@ -43,7 +43,7 @@ Cloudflare Images already stores the image bytes and metadata. This API is a thi
 ## Local setup
 
 ```powershell
-git clone <this-repo-url> image-cdn-api
+git clone https://github.com/huziibee/scepter_cdn.git image-cdn-api
 cd image-cdn-api
 copy .env.example .env
 dotnet restore
@@ -128,7 +128,7 @@ $env:CLOUDFLARE_VARIANT = "public"
 dotnet run --project src/ImageCdn.Api --urls http://localhost:5000
 ```
 
-No code changes required. Perform a live POST/GET smoke test after credentials arrive.
+No code changes required. Use the persistent live-upload workflow below to retain and verify real media.
 
 ## Endpoint documentation
 
@@ -386,3 +386,51 @@ This API implements replace as:
 4. return the resulting CDN URL
 
 That sequence is **not fully atomic**. If step 3 fails after step 2 succeeds, the previous image may already be gone. Callers/operators should treat PUT as best-effort replacement and retry carefully.
+
+## Persistent live media verification
+
+The [Persistent Cloudflare Media workflow](.github/workflows/persistent-cloudflare-media.yml)
+uses the existing GitHub Actions secret `CLOUDFLARE_API_TOKEN`. It runs when its workflow
+file changes on `main`, or manually from Actions. No Cloudflare token is written to source,
+logs, or artifacts. The local API receives a fresh temporary inbound API key.
+
+It generates a real 640×360 JPEG and a three-second H.264/AAC MP4, then:
+
+1. Uploads the JPEG through `POST /api/images` with exact custom ID `huziibee/001.jpg`.
+2. Creates a Stream direct-upload URL through `POST /api/videos/direct-upload`, with
+   `creator=huziibee` and `fileName=huziibee/001.mp4` (stored as Stream `meta.name`).
+3. Uploads MP4 bytes directly to Stream and polls `GET /api/videos/{uid}` until
+   `readyToStream=true` (up to ten minutes).
+4. Fetches the image, HLS, preview, DASH, and thumbnail URLs and decodes the JPEG and
+   one second of HLS playback with ffmpeg.
+5. Rechecks both assets through the API. **Neither asset is deleted**, including on failure.
+
+The image URL is:
+`https://imagedelivery.net/ySTuqSaEqBvpVysl2D5VVQ/huziibee/001.jpg/public`.
+Stream assigns a UID; `huziibee/001.mp4` is metadata, not a custom Stream UID or playback path.
+The workflow summary and `persistent-cloudflare-media` artifact contain the exact returned
+URLs, UID, readiness, and HTTP verification results. Allocated video UIDs are also saved
+on failure. Artifacts contain no API tokens or one-time upload URLs.
+
+Reruns retain an existing image at the exact ID and reuse a non-error Stream video for
+creator `huziibee` whose `meta.name` is `huziibee/001.mp4`. They do not overwrite image bytes.
+The separate **Live Cloudflare Smoke Test** workflow exercises CRUD with disposable
+`live-smoke/...` assets and deletes only those fixtures; it does not delete these retained assets.
+
+### Application configuration
+
+For the real Cloudflare provider, set `IMAGE_PROVIDER=Cloudflare` and use the account ID,
+account hash, and `public` variant from `.env.example`. Supply `CLOUDFLARE_API_TOKEN`
+through the deployment secret store and set a private `SERVICE_API_KEY` for inbound API calls.
+GitHub Actions secrets cannot be read back or exported by this application: inject
+`${{ secrets.CLOUDFLARE_API_TOKEN }}` into the deployment environment in an authorized workflow,
+or set the same token securely on your application host. No signing key is needed for these public assets.
+
+The application reads `.env` from its **current working directory**. Run from the repository
+root with `--no-launch-profile` to avoid development launch settings:
+
+```bash
+dotnet run --project src/ImageCdn.Api --no-launch-profile --urls http://localhost:5000
+```
+
+See [persistent media verification](docs/persistent-media.md) for the recorded live result.
