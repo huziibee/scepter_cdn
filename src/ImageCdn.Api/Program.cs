@@ -8,6 +8,8 @@ using ImageCdn.Api.Validation;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.OpenApi;
 
+LoadDotEnv();
+
 var builder = WebApplication.CreateBuilder(args);
 
 BindEnvironmentOverrides(builder.Configuration);
@@ -144,6 +146,44 @@ if (string.Equals(providerName, "Local", StringComparison.OrdinalIgnoreCase))
 
 app.MapControllers();
 app.Run();
+
+static void LoadDotEnv()
+{
+    var envPath = Path.Combine(Directory.GetCurrentDirectory(), ".env");
+    if (!File.Exists(envPath))
+    {
+        return;
+    }
+
+    foreach (var rawLine in File.ReadLines(envPath))
+    {
+        var line = rawLine.Trim();
+        if (line.Length == 0 || line.StartsWith('#'))
+        {
+            continue;
+        }
+
+        var separator = line.IndexOf('=');
+        if (separator <= 0)
+        {
+            continue;
+        }
+
+        var key = line[..separator].Trim();
+        var value = line[(separator + 1)..].Trim();
+
+        if ((value.StartsWith('"') && value.EndsWith('"')) ||
+            (value.StartsWith('\'') && value.EndsWith('\'')))
+        {
+            value = value[1..^1];
+        }
+
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(key)))
+        {
+            Environment.SetEnvironmentVariable(key, value);
+        }
+    }
+}
 
 static void BindEnvironmentOverrides(ConfigurationManager configuration)
 {
