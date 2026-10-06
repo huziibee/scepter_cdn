@@ -43,8 +43,8 @@ def api(path, payload=None):
     return json.loads(request(BASE + path, payload=payload, api=True)[0])
 
 
-def cf(path):
-    envelope = json.loads(request('https://api.cloudflare.com/client/v4/accounts/' + os.environ['CLOUDFLARE_ACCOUNT_ID'] + path, cloudflare=True)[0])
+def cf(path, payload=None):
+    envelope = json.loads(request('https://api.cloudflare.com/client/v4/accounts/' + os.environ['CLOUDFLARE_ACCOUNT_ID'] + path, payload=payload, cloudflare=True)[0])
     assert envelope['success'], 'Cloudflare metadata request failed'
     return envelope['result']
 
@@ -87,8 +87,10 @@ save('image.json', image)
 checks = {'image': fetch('JPEG delivery', image_url, lambda data, ct: ct.startswith('image/') and data.startswith(b'\xff\xd8'))}
 
 # Reuse the retained video on reruns; Stream assigns its own UID, unlike Images.
-existing = cf('/stream?creator=huziibee')
-videos = [v for v in existing if v.get('meta', {}).get('name') == VIDEO_NAME and v.get('status', {}).get('state') != 'error']
+record = Path('docs/live-media.json')
+recorded_uid = json.loads(record.read_text()).get('videoUid') if record.exists() else None
+existing = [cf('/stream/' + recorded_uid)] if recorded_uid else cf('/stream?creator=huziibee')
+videos = [v for v in existing if (recorded_uid or v.get('meta', {}).get('name') == VIDEO_NAME) and v.get('status', {}).get('state') != 'error']
 if videos:
     uid = videos[0]['uid']
     print('Reusing retained Stream video: ' + uid, flush=True)
@@ -119,6 +121,10 @@ else:
     raise RuntimeError('Stream did not become ready within 10 minutes; retained UID: ' + uid)
 save('video-ready.json', video)
 raw_video = cf('/stream/' + uid)
+# Stream may replace meta.name with the multipart filename during ingestion.
+if raw_video.get('meta', {}).get('name') != VIDEO_NAME:
+    cf('/stream/' + uid, {'meta': {**raw_video.get('meta', {}), 'name': VIDEO_NAME}})
+    raw_video = cf('/stream/' + uid)
 assert raw_video['meta']['name'] == VIDEO_NAME, 'Stream filename metadata mismatch'
 assert raw_video['readyToStream'] and not raw_video.get('requireSignedURLs', False)
 assert not raw_video.get('scheduledDeletion'), 'Video has a scheduled deletion'

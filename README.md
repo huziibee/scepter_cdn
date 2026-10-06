@@ -413,7 +413,9 @@ URLs, UID, readiness, and HTTP verification results. Allocated video UIDs are al
 on failure. Artifacts contain no API tokens or one-time upload URLs.
 
 Reruns retain an existing image at the exact ID and reuse a non-error Stream video for
-creator `huziibee` whose `meta.name` is `huziibee/001.mp4`. They do not overwrite image bytes.
+creator `huziibee` whose `meta.name` is `huziibee/001.mp4`. When `docs/live-media.json`
+exists, its recorded UID is preferred. After ingestion, the workflow restores the exact
+`meta.name` through the Stream metadata API if Cloudflare normalized the multipart filename. They do not overwrite image bytes.
 The separate **Live Cloudflare Smoke Test** workflow exercises CRUD with disposable
 `live-smoke/...` assets and deletes only those fixtures; it does not delete these retained assets.
 

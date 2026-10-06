@@ -1,4 +1,5 @@
 name: Persistent Cloudflare Media
+# Retained video UID is recorded in docs/live-media.json.
 
 on:
   workflow_dispatch:
