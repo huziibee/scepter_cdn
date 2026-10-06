@@ -57,6 +57,12 @@ jobs:
           dotnet restore
           dotnet build --no-restore --configuration Release
 
+      - name: Install ffmpeg
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
       - name: Generate smoke-test media
         if: env.CLOUDFLARE_API_TOKEN != ''
         shell: bash
