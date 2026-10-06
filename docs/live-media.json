@@ -1,4 +1,42 @@
 {
+  "verifiedAt": "2026-10-06T17:35:00.358015+00:00",
+  "imageId": "huziibee/001.jpg",
+  "imageUrl": "https://imagedelivery.net/ySTuqSaEqBvpVysl2D5VVQ/huziibee/001.jpg/public",
+  "videoFileName": "huziibee/001.mp4",
   "videoUid": "6f44bb792c9d706113b1585ddc61e533",
-  "verificationPending": true
+  "previewUrl": "https://customer-nas16iwt0wg861ob.cloudflarestream.com/6f44bb792c9d706113b1585ddc61e533/watch",
+  "hlsUrl": "https://customer-nas16iwt0wg861ob.cloudflarestream.com/6f44bb792c9d706113b1585ddc61e533/manifest/video.m3u8",
+  "dashUrl": "https://customer-nas16iwt0wg861ob.cloudflarestream.com/6f44bb792c9d706113b1585ddc61e533/manifest/video.mpd",
+  "thumbnailUrl": "https://customer-nas16iwt0wg861ob.cloudflarestream.com/6f44bb792c9d706113b1585ddc61e533/thumbnails/thumbnail.jpg",
+  "readyToStream": true,
+  "assetsRetained": true,
+  "checks": {
+    "image": {
+      "status": 200,
+      "bytes": 17153,
+      "contentType": "image/jpeg"
+    },
+    "hls": {
+      "status": 200,
+      "bytes": 661,
+      "contentType": "application/vnd.apple.mpegurl"
+    },
+    "preview": {
+      "status": 200,
+      "bytes": 2220,
+      "contentType": "text/html; charset=utf-8"
+    },
+    "dash": {
+      "status": 200,
+      "bytes": 3983,
+      "contentType": "application/dash+xml"
+    },
+    "thumbnail": {
+      "status": 200,
+      "bytes": 14842,
+      "contentType": "image/jpeg"
+    },
+    "imageDecoded": true,
+    "videoDecoded": true
+  }
 }
