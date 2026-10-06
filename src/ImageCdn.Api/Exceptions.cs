@@ -22,6 +22,17 @@ public sealed class ImageConflictException : Exception
     public string Path { get; }
 }
 
+public sealed class VideoNotFoundException : Exception
+{
+    public VideoNotFoundException(string uid)
+        : base($"Video '{uid}' was not found.")
+    {
+        Uid = uid;
+    }
+
+    public string Uid { get; }
+}
+
 public sealed class UpstreamProviderException : Exception
 {
     public UpstreamProviderException(string message, int? statusCode = null, string? providerCode = null)
